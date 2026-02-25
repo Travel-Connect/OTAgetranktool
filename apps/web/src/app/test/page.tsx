@@ -708,5 +708,12 @@ const btnSmall: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 500,
 };
+const cardStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  marginBottom: 6,
+  borderRadius: 6,
+  border: "1px solid #e5e7eb",
+  background: "#fff",
+};
 const th: React.CSSProperties = { padding: "6px 8px", textAlign: "left", borderBottom: "2px solid #d1d5db" };
 const td: React.CSSProperties = { padding: "6px 8px", borderBottom: "1px solid #e5e7eb" };
