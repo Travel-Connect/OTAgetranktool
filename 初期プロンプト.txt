@@ -1,0 +1,6 @@
+このプロジェクトではClaude Codeが実装してOKです。
+ただし安全性のため、(1) 先に小さく実装、(2) uv/テスト/Playwrightで検証、(3) PR前にghアカウント確認、を必ず守ってください。
+
+必要に応じてclaude-delegatorでCodex専門家（plan review / code review / security）に確認を取り、結果を反映してください。
+
+自動化を強くする場合は /sandbox を優先し、--dangerously-skip-permissions は隔離環境＋ネットワーク制限が前提です。

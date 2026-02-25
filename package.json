@@ -1,0 +1,15 @@
+{
+  "name": "ota-getrank-tool",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "pnpm --filter @ota/web dev",
+    "build": "pnpm --filter @ota/web build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "type-check": "pnpm -r type-check"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

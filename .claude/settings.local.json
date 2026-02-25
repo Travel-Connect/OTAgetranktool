@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "defaultMode": "acceptEdits",
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "network": {
+      "allowLocalBinding": true,
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "*.githubusercontent.com",
+
+        "pypi.org",
+        "files.pythonhosted.org",
+
+        "registry.npmjs.org",
+        "*.npmjs.org",
+
+        "code.claude.com",
+        "*.anthropic.com",
+
+        "playwright.azureedge.net",
+        "playwright-verizon.azureedge.net",
+
+        "*.com",
+        "*.org",
+        "*.net",
+        "*.io",
+        "*.dev",
+        "*.app",
+        "*.ai",
+        "*.co",
+        "*.jp"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "WebFetch",
+
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(uv *)",
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+      "Bash(mypy *)",
+      "Bash(playwright *)",
+      "Bash(node *)",
+      "Bash(npm *)",
+      "Bash(pnpm *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/userprompt_sentinel.py"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pretool_guard.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/posttool_audit.py"
+          }
+        ]
+      }
+    ]
+  }
+}
