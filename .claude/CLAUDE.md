@@ -11,6 +11,9 @@
 
 ## Supabase
 - スキーマで分ける設計（`public` 以外のカスタムスキーマを使用）。スキーマ作成時はユーザーに確認すること。
+- **`supabase init` / `supabase link` / `supabase db push` 等の Supabase CLI による既存プロジェクトへの直接操作は禁止**。他プロジェクトに影響するリスクがある。
+- DB変更は **SQLマイグレーションファイルを生成** し、ユーザーが Dashboard SQL Editor で実行する方式とする。
+- スキーマ名: `ota_getrank`
 
 ## Workflow default
 1) Clarify goal & acceptance criteria

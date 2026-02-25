@@ -10,3 +10,6 @@ export const OTA_LIST = [
 ] as const;
 
 export type OtaType = (typeof OTA_LIST)[number];
+
+// Supabase client
+export { createBrowserClient, createServiceClient } from "./supabase";
