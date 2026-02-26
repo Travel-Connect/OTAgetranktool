@@ -60,6 +60,19 @@ export function Sidebar() {
         ))}
       </div>
 
+      <div className="px-3 py-2 border-t border-gray-700">
+        <Link
+          href="/settings"
+          className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${
+            pathname.startsWith("/settings")
+              ? "bg-gray-700 text-white"
+              : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+          }`}
+        >
+          設定・Cron
+        </Link>
+      </div>
+
       <div className="p-3 border-t border-gray-700">
         {creating ? (
           <form onSubmit={handleCreate} className="flex gap-1">
