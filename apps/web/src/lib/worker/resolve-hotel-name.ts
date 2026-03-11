@@ -1,5 +1,5 @@
 import type { OtaType } from "@ota/shared";
-import { acquireWorkerContext, closeBrowser } from "./browser-pool";
+import { acquireWorkerContext } from "./browser-pool";
 
 /**
  * OTA施設ページからホテル名を自動取得する

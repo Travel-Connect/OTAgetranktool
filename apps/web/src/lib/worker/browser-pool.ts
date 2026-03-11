@@ -60,29 +60,37 @@ export interface WorkerContext {
 export async function acquireWorkerContext(): Promise<WorkerContext> {
   await acquireSlot();
 
-  const profile = getNextProfile();
-  const b = await getBrowser();
-  const context = await b.newContext({
-    userAgent: profile.userAgent,
-    viewport: profile.viewport,
-    locale: profile.locale,
-    timezoneId: "Asia/Tokyo",
-    extraHTTPHeaders: {
-      "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-    },
-  });
+  let context: BrowserContext | null = null;
+  try {
+    const profile = getNextProfile();
+    const b = await getBrowser();
+    context = await b.newContext({
+      userAgent: profile.userAgent,
+      viewport: profile.viewport,
+      locale: profile.locale,
+      timezoneId: "Asia/Tokyo",
+      extraHTTPHeaders: {
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+      },
+    });
 
-  const page = await context.newPage();
+    const page = await context.newPage();
 
-  return {
-    context,
-    page,
-    profile,
-    release: async () => {
-      await context.close().catch(() => {});
-      releaseSlot();
-    },
-  };
+    return {
+      context,
+      page,
+      profile,
+      release: async () => {
+        await context!.close().catch(() => {});
+        releaseSlot();
+      },
+    };
+  } catch (err) {
+    // ブラウザ起動やコンテキスト作成に失敗した場合、スロットを解放
+    if (context) await context.close().catch(() => {});
+    releaseSlot();
+    throw err;
+  }
 }
 
 /** ブラウザを完全に閉じる（ジョブ完了時に呼ぶ） */

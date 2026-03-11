@@ -24,10 +24,6 @@ const OTA_COOLDOWN: Record<string, number> = {
 };
 const DEFAULT_COOLDOWN = 5000;
 
-/** 直前に実行した海外OTAを記録 */
-let lastExecutedOta: string | null = null;
-let lastExecutedTime = 0;
-
 /**
  * ジョブを実行する
  * - タスクをチェックイン日昇順で巡回
@@ -103,13 +99,13 @@ export async function runJob(jobId: string): Promise<void> {
     .eq("enabled", true);
 
   // ── 前回ヒント取得（スマートページネーション用）──
+  // preset_id ベースで検索し、同一エリア・同一ホテルセットのジョブからのみ取得
   const hintsByKey = new Map<string, PaginationHint>();
-  {
-    // 同一プロジェクトの直近成功ジョブからヒントを取得
+  if (job.preset_id) {
     const { data: prevJobs } = await db
       .from("jobs")
       .select("id")
-      .eq("project_id", job.project_id)
+      .eq("preset_id", job.preset_id)
       .in("status", ["success", "partial"])
       .neq("id", jobId)
       .order("run_date", { ascending: false })
@@ -132,7 +128,7 @@ export async function runJob(jobId: string): Promise<void> {
         }
       }
       if (hintsByKey.size > 0) {
-        console.log(`[hints] Loaded ${hintsByKey.size} pagination hints from previous runs`);
+        console.log(`[hints] Loaded ${hintsByKey.size} pagination hints from preset ${job.preset_id}`);
       }
     }
   }
@@ -325,6 +321,9 @@ export async function runJob(jobId: string): Promise<void> {
     if (overseasTasks.length > 0) {
       const overseasQueue = interleaveByOta(overseasTasks);
       console.log(`[sequential] Running ${overseasQueue.length} overseas OTA tasks sequentially`);
+
+      let lastExecutedOta: string | null = null;
+      let lastExecutedTime = 0;
 
       while (overseasQueue.length > 0) {
         const task = overseasQueue.shift()!;

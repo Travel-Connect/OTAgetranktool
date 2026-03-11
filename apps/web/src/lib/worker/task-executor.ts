@@ -50,12 +50,20 @@ const TASK_TIMEOUT = 300000; // タスク全体のタイムアウト (5分)
  * タスク全体にタイムアウトを設定してハングを防止
  */
 export async function executeTask(input: TaskInput): Promise<TaskExecutionResult> {
-  return Promise.race([
-    executeTaskInner(input),
-    new Promise<TaskExecutionResult>((_, reject) =>
-      setTimeout(() => reject(new Error("Task execution timeout (3 min)")), TASK_TIMEOUT),
-    ),
-  ]);
+  let timeoutHandle: ReturnType<typeof setTimeout>;
+  try {
+    return await Promise.race([
+      executeTaskInner(input),
+      new Promise<TaskExecutionResult>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error("Task execution timeout (5 min)")),
+          TASK_TIMEOUT,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutHandle!);
+  }
 }
 
 async function executeTaskInner(input: TaskInput): Promise<TaskExecutionResult> {
@@ -110,13 +118,6 @@ async function executeTaskInner(input: TaskInput): Promise<TaskExecutionResult> 
           errorMessage: `Blocked or CAPTCHA detected: ${blocked}`,
           ...artifacts,
         };
-      }
-
-      // スクロール型OTA: 前回スキャン件数をブラウザに伝達（高速スクロール用）
-      if (extractor.isScrollBased && hint && hint.scannedCount > 0) {
-        await page.evaluate((target) => {
-          (window as any).__fastScrollTarget = target;
-        }, hint.scannedCount);
       }
 
       result = await executeDefaultPagination(page, extractor, input, waitStrategy);
@@ -232,10 +233,10 @@ async function executeSmartPagination(
       totalCountRawText = extraction.totalCountRawText;
     }
 
-    // 空ページ = これ以上先にはデータなし
+    // 空ページ = これ以上先にはデータなし → ただし他ページの走査は継続
     if (extraction.items.length === 0) {
-      console.log(`[smart] ${input.ota}: page ${pageNum} empty, stopping expansion`);
-      break;
+      console.log(`[smart] ${input.ota}: page ${pageNum} empty, skipping`);
+      continue;
     }
 
     // 全ホテル発見チェック（ページ順に並べ直してからチェック）
@@ -249,6 +250,32 @@ async function executeSmartPagination(
     const naturalCount = orderedItems.filter((i) => !i.isAd).length;
     if (naturalCount >= 200) {
       break;
+    }
+  }
+
+  // ── 順位確定フェーズ: 未取得ページを埋め戻し ──
+  // page 1 〜 max(取得済みページ) の間に欠けたページがあれば取得し、
+  // 絶対順位の正確性を保証する
+  const maxVisited = Math.max(...visitedPages);
+  for (let p = 1; p <= maxVisited; p++) {
+    if (visitedPages.has(p)) continue;
+
+    const pageUrl = p === 1 ? input.url : extractor.getPageUrl!(input.url, p);
+    console.log(`[smart] ${input.ota}: backfilling page ${p} for rank accuracy`);
+
+    await waitForDomain(pageUrl);
+    await page.goto(pageUrl, {
+      waitUntil: waitStrategy,
+      timeout: NAVIGATION_TIMEOUT,
+    });
+
+    const extraction = await extractor.extractPage(page);
+    visitedPages.add(p);
+    pageItems.set(p, extraction.items);
+
+    if (totalCountInt === null && extraction.totalCount !== null) {
+      totalCountInt = extraction.totalCount;
+      totalCountRawText = extraction.totalCountRawText;
     }
   }
 
