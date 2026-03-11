@@ -20,6 +20,17 @@ export async function GET(
 
   if (!job) return err("Job not found", 404);
 
+  // プリセット情報（エリア名取得用）
+  let areaLabel = "";
+  if (job.preset_id) {
+    const { data: preset } = await db
+      .from("project_default_presets")
+      .select("area_label, name")
+      .eq("id", job.preset_id)
+      .single();
+    areaLabel = preset?.area_label ?? "";
+  }
+
   // タスク + 結果
   const { data: tasks } = await db
     .from("job_tasks")
@@ -42,6 +53,7 @@ export async function GET(
   const buffer = await buildExcel({
     runDate: job.run_date,
     projectName: (job as any).projects?.name ?? "",
+    areaLabel,
     nights: tasks?.[0]?.nights ?? 1,
     rooms: tasks?.[0]?.rooms ?? 1,
     hotels,

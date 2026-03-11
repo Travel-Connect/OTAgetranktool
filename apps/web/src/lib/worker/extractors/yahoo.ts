@@ -2,23 +2,24 @@ import type { Page } from "playwright";
 import type { OtaExtractor, PageExtraction, ListItem } from "../extractor-types";
 
 /**
- * 一休.com Extractor
+ * Yahooトラベル Extractor
  *
- * 一休はNuxt.js (Vue) SPA:
- * - Schema.orgマークアップ活用: section[itemprop="itemListElement"]
- * - ホテルID: meta[itemprop="url"] の content属性 (8桁ゼロ埋めID)
- * - ホテル名: meta[itemprop="description"] の "|" 前 or リンクテキスト
- * - 総件数: body text の「対象施設: N 件」
- * - 広告: 現時点で広告マーカー未確認
- * - ページネーション: パスベース /p2/, /p3/ ... (1ページ20件)
- * - 次ページ判定: "次へ" リンクの存在
- * - ホテルURL形式: https://www.ikyu.com/00002680/ (ルート直下8桁ID)
+ * Yahooトラベルは一休と技術的に統合されている (Nuxt.js SPA):
+ * - DOM構造・セレクタは一休と完全同一
+ * - ドメインのみ異なる: travel.yahoo.co.jp vs www.ikyu.com
+ * - 掲載施設が異なる (一休は審査通過施設のみ、Yahooは審査不要も含む)
+ * - 検索順位も異なる可能性あり
+ *
+ * Schema.orgマークアップ活用: section[itemprop="itemListElement"]
+ * ホテルID: meta[itemprop="url"] (8桁ゼロ埋めID)
+ * ページネーション: パスベース /p2/, /p3/ ... (1ページ20件)
+ * ホテルURL形式: https://travel.yahoo.co.jp/00912308/
  */
 
 const ITEMS_PER_PAGE = 20;
 
-export const ikyuExtractor: OtaExtractor = {
-  ota: "ikyu",
+export const yahooExtractor: OtaExtractor = {
+  ota: "yahoo",
   itemsPerPage: 20,
   // SPA (Nuxt.js) のため networkidle で完全レンダリングを待つ
   waitUntil: "networkidle",
@@ -29,7 +30,7 @@ export const ikyuExtractor: OtaExtractor = {
       .waitForSelector('section[itemprop="itemListElement"]', { timeout: 15000 })
       .catch(() => {});
 
-    // page.evaluate() で一括抽出（Playwright locator のタイミング問題を回避）
+    // page.evaluate() で一括抽出
     const extracted = await page.evaluate(() => {
       // === 1. 総件数 ===
       let totalCount: number | null = null;
@@ -89,8 +90,7 @@ export const ikyuExtractor: OtaExtractor = {
           }
         }
 
-        // 広告判定: 一休では現時点で広告マーカー未確認
-        // テキストやクラスに広告指標があれば検出
+        // 広告判定
         let isAd = false;
         const cardText = card.textContent || "";
         if (
@@ -120,7 +120,7 @@ export const ikyuExtractor: OtaExtractor = {
 
     // ListItem 形式に変換
     const items: ListItem[] = extracted.items.map((item) => ({
-      propertyUrl: normalizeIkyuUrl(item.hotelId),
+      propertyUrl: normalizeYahooUrl(item.hotelId),
       propertyId: item.hotelId,
       name: item.name ?? undefined,
       isAd: item.isAd,
@@ -135,7 +135,7 @@ export const ikyuExtractor: OtaExtractor = {
   },
 
   getNextPageUrl(currentUrl: string, currentPage: number): string {
-    // 一休はパスベース: /area/ma047007/p2/, /area/ma047007/p3/
+    // パスベース: /area/ma047007/p2/, /okinawa/36201004/p2/
     const url = new URL(currentUrl);
 
     // 既存の /pN/ を除去
@@ -164,22 +164,22 @@ export const ikyuExtractor: OtaExtractor = {
 };
 
 /**
- * 一休 URL正規化: hotelIdベースの統一形式に変換
+ * Yahooトラベル URL正規化: hotelIdベースの統一形式に変換
  *
- * - hotelId数字のみ: 00002680 → https://www.ikyu.com/00002680/
- * - 施設ページURL: /00002680/?discsort=1&lc=1 → https://www.ikyu.com/00002680/
+ * - hotelId数字のみ: 00912308 → https://travel.yahoo.co.jp/00912308/
+ * - 施設ページURL: /00912308/?discsort=1&lc=1 → https://travel.yahoo.co.jp/00912308/
  */
-export function normalizeIkyuUrl(hotelIdOrHref: string): string {
+export function normalizeYahooUrl(hotelIdOrHref: string): string {
   // 数字のみの場合はhotelIdとして直接構築
   if (/^\d+$/.test(hotelIdOrHref)) {
-    return `https://www.ikyu.com/${hotelIdOrHref}/`;
+    return `https://travel.yahoo.co.jp/${hotelIdOrHref}/`;
   }
 
   try {
-    const url = new URL(hotelIdOrHref, "https://www.ikyu.com");
+    const url = new URL(hotelIdOrHref, "https://travel.yahoo.co.jp");
     const match = url.pathname.match(/\/(\d{5,})\//);
     if (match) {
-      return `https://www.ikyu.com/${match[1]}/`;
+      return `https://travel.yahoo.co.jp/${match[1]}/`;
     }
     return `${url.origin}${url.pathname}`;
   } catch {

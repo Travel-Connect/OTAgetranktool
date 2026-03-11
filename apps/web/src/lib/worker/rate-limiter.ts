@@ -12,6 +12,7 @@ const DOMAIN_INTERVALS: Record<string, number> = {
   "www.booking.com": 2500,
   "www.agoda.com": 3000,
   "jp.trip.com": 2500,
+  "travel.yahoo.co.jp": 2000,
 };
 
 const DEFAULT_INTERVAL = 2000;

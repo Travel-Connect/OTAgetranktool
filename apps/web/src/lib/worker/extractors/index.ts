@@ -7,6 +7,7 @@ import { expediaExtractor } from "./expedia";
 import { bookingExtractor } from "./booking";
 import { agodaExtractor } from "./agoda";
 import { tripcomExtractor } from "./tripcom";
+import { yahooExtractor } from "./yahoo";
 
 export const OTA_EXTRACTORS: Record<OtaType, OtaExtractor> = {
   rakuten: rakutenExtractor,
@@ -16,4 +17,5 @@ export const OTA_EXTRACTORS: Record<OtaType, OtaExtractor> = {
   booking: bookingExtractor,
   agoda: agodaExtractor,
   tripcom: tripcomExtractor,
+  yahoo: yahooExtractor,
 };

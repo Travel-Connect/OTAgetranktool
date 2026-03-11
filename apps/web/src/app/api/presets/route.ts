@@ -31,6 +31,8 @@ export async function POST(request: NextRequest) {
     .insert({
       project_id,
       name,
+      hotel_ids: body.hotel_ids ?? [],
+      area_label: body.area_label ?? "",
       otas_json: body.otas_json ?? [],
       adults_per_room_json: body.adults_per_room_json ?? [2],
       rooms_int: body.rooms_int ?? 1,
@@ -63,4 +65,18 @@ export async function PUT(request: NextRequest) {
 
   if (error) return err(error.message, 500);
   return ok(data);
+}
+
+/** DELETE /api/presets */
+export async function DELETE(request: NextRequest) {
+  const { id } = await request.json();
+  if (!id) return err("id is required");
+
+  const db = getDb();
+  const { error } = await db
+    .from("project_default_presets")
+    .delete()
+    .eq("id", id);
+  if (error) return err(error.message, 500);
+  return ok({ deleted: id });
 }

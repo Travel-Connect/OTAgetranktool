@@ -43,6 +43,19 @@ export const hotelsApi = {
       method: "PUT",
       body: JSON.stringify({ id, ...updates }),
     }),
+  delete: (id: string) =>
+    request<{ deleted: string }>("/api/hotels", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
+    }),
+  resolveName: (ota: string, propertyUrl: string) =>
+    request<{ name: string; ota: string; property_url: string }>(
+      "/api/hotels/resolve-name",
+      {
+        method: "POST",
+        body: JSON.stringify({ ota, property_url: propertyUrl }),
+      },
+    ),
 };
 
 export const searchProfilesApi = {
@@ -52,6 +65,7 @@ export const searchProfilesApi = {
     project_id: string;
     ota: string;
     base_url: string;
+    area_label?: string;
     variable_mapping_json?: Record<string, unknown>;
     allowlist_params_json?: string[];
     denylist_params_json?: string[];
@@ -65,6 +79,11 @@ export const searchProfilesApi = {
       method: "PUT",
       body: JSON.stringify({ id, ...updates }),
     }),
+  delete: (id: string) =>
+    request<{ deleted: string }>("/api/search-profiles", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
+    }),
 };
 
 export const presetsApi = {
@@ -73,6 +92,8 @@ export const presetsApi = {
   create: (body: {
     project_id: string;
     name: string;
+    hotel_ids?: string[];
+    area_label?: string;
     otas_json?: string[];
     nights_int?: number;
     rooms_int?: number;
@@ -90,6 +111,11 @@ export const presetsApi = {
       method: "PUT",
       body: JSON.stringify({ id, ...updates }),
     }),
+  delete: (id: string) =>
+    request<{ deleted: string }>("/api/presets", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
+    }),
 };
 
 export const jobsApi = {
@@ -98,7 +124,8 @@ export const jobsApi = {
   create: (body: {
     project_id: string;
     run_date: string;
-    tasks: Array<{
+    preset_id?: string;
+    tasks?: Array<{
       ota: string;
       checkin_date: string;
       nights?: number;

@@ -1,5 +1,10 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium } from "playwright-extra";
+import type { Browser, BrowserContext, Page } from "playwright";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { getNextProfile, type BrowserProfile } from "./ua-rotation";
+
+// ボット検出回避: navigator.webdriver 隠蔽、HeadlessChrome UA 修正 等
+chromium.use(StealthPlugin());
 
 /** グローバル同時実行数上限 */
 const MAX_CONCURRENCY = 5;
@@ -66,6 +71,7 @@ export async function acquireWorkerContext(): Promise<WorkerContext> {
       "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
     },
   });
+
   const page = await context.newPage();
 
   return {

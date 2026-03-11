@@ -7,6 +7,7 @@ import { expediaBuilder } from "./expedia";
 import { bookingBuilder } from "./booking";
 import { agodaBuilder } from "./agoda";
 import { tripcomBuilder } from "./tripcom";
+import { yahooBuilder } from "./yahoo";
 
 export type { SearchCondition, SearchProfile, OtaUrlBuilder } from "./types";
 export { calcCheckoutDate } from "./types";
@@ -21,4 +22,5 @@ export const OTA_BUILDERS: Record<OtaType, OtaUrlBuilder> = {
   booking: bookingBuilder,
   agoda: agodaBuilder,
   tripcom: tripcomBuilder,
+  yahoo: yahooBuilder,
 };

@@ -1,4 +1,4 @@
-export { executeTask, type TaskInput, type TaskExecutionResult } from "./task-executor";
+export { executeTask, type TaskInput, type TaskExecutionResult, type PaginationHint } from "./task-executor";
 export { acquireWorkerContext, closeBrowser } from "./browser-pool";
 export { waitForDomain, resetRateLimiter } from "./rate-limiter";
 export { getNextProfile, resetRotation } from "./ua-rotation";

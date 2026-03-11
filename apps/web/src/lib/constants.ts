@@ -1,7 +1,7 @@
 import type { OtaType } from "@ota/shared";
 
 export const OTA_LIST = [
-  "rakuten", "jalan", "ikyu", "expedia", "booking", "agoda", "tripcom",
+  "rakuten", "jalan", "ikyu", "expedia", "booking", "agoda", "tripcom", "yahoo",
 ] as const;
 
 export const OTA_DISPLAY_NAMES: Record<OtaType, string> = {
@@ -12,6 +12,7 @@ export const OTA_DISPLAY_NAMES: Record<OtaType, string> = {
   booking: "Booking.com",
   agoda: "Agoda",
   tripcom: "Trip.com",
+  yahoo: "Yahooトラベル",
 };
 
 export const STATUS_COLORS: Record<string, string> = {

@@ -12,12 +12,15 @@ import { OtaBadge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { HotelForm } from "@/components/forms/HotelForm";
+import { HotelEditForm } from "@/components/forms/HotelEditForm";
 
 export default function HotelsPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingHotel, setEditingHotel] = useState<Hotel | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -56,6 +59,28 @@ export default function HotelsPage() {
                   {h.memo && <p className="text-xs text-gray-500 mt-0.5">{h.memo}</p>}
                   <p className="text-xs text-gray-400 mt-0.5">{h.id.slice(0, 8)}</p>
                 </div>
+                <div className="flex gap-1 shrink-0">
+                  <Button size="sm" variant="secondary" onClick={() => setEditingHotel(h)}>
+                    編集
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={deleting === h.id}
+                    onClick={async () => {
+                      if (!confirm(`「${h.display_name}」を削除しますか？`)) return;
+                      setDeleting(h.id);
+                      try {
+                        await hotelsApi.delete(h.id);
+                        load();
+                      } finally {
+                        setDeleting(null);
+                      }
+                    }}
+                  >
+                    削除
+                  </Button>
+                </div>
               </div>
               {h.hotel_ota_mappings && h.hotel_ota_mappings.length > 0 && (
                 <div className="mt-3 space-y-1.5">
@@ -84,6 +109,16 @@ export default function HotelsPage() {
           onSaved={() => { setShowForm(false); load(); }}
           onCancel={() => setShowForm(false)}
         />
+      </Modal>
+
+      <Modal open={!!editingHotel} onClose={() => setEditingHotel(null)} title="ホテル編集">
+        {editingHotel && (
+          <HotelEditForm
+            hotel={editingHotel}
+            onSaved={() => { setEditingHotel(null); load(); }}
+            onCancel={() => setEditingHotel(null)}
+          />
+        )}
       </Modal>
     </div>
   );

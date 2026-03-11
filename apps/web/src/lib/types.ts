@@ -32,6 +32,7 @@ export interface SearchProfile {
   project_id: string;
   ota: string;
   base_url: string;
+  area_label: string;
   variable_mapping_json: Record<string, unknown>;
   allowlist_params_json: string[] | null;
   denylist_params_json: string[] | null;
@@ -44,6 +45,8 @@ export interface Preset {
   id: string;
   project_id: string;
   name: string;
+  hotel_ids: string[];
+  area_label: string;
   otas_json: string[];
   nights_int: number;
   rooms_int: number;

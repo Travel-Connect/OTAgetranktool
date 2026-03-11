@@ -63,26 +63,77 @@ export async function POST(request: NextRequest) {
       enabled: m.enabled ?? true,
     }));
     const { error: mapErr } = await db.from("hotel_ota_mappings").insert(mappings);
-    if (mapErr) return err(mapErr.message, 500);
+    if (mapErr) {
+      // ロールバック
+      await db.from("project_hotels").delete().eq("hotel_id", hotel.id);
+      await db.from("hotels").delete().eq("id", hotel.id);
+      return err(mapErr.message, 500);
+    }
   }
 
   return ok(hotel, 201);
 }
 
-/** PUT /api/hotels — ホテル更新 */
+/** PUT /api/hotels — ホテル更新 + OTAマッピング同期 */
 export async function PUT(request: NextRequest) {
   const body = await request.json();
-  const { id, ...updates } = body;
+  const { id, ota_mappings, ...updates } = body;
   if (!id) return err("id is required");
 
   const db = getDb();
+
+  // 1. ホテル基本情報の更新
+  const hotelUpdates: Record<string, unknown> = {
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+  // ota_mappings以外のフィールドがあれば更新
   const { data, error } = await db
     .from("hotels")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(hotelUpdates)
     .eq("id", id)
     .select()
     .single();
 
   if (error) return err(error.message, 500);
+
+  // 2. OTAマッピングの同期（指定があれば）
+  if (ota_mappings && Array.isArray(ota_mappings)) {
+    // 既存マッピングを全削除して再作成（シンプルな同期）
+    const { error: delErr } = await db
+      .from("hotel_ota_mappings")
+      .delete()
+      .eq("hotel_id", id);
+    if (delErr) return err(delErr.message, 500);
+
+    if (ota_mappings.length > 0) {
+      const mappings = ota_mappings.map((m: any) => ({
+        hotel_id: id,
+        ota: m.ota,
+        ota_property_url: m.ota_property_url,
+        ota_property_id: m.ota_property_id ?? null,
+        enabled: m.enabled ?? true,
+      }));
+      const { error: insErr } = await db
+        .from("hotel_ota_mappings")
+        .insert(mappings);
+      if (insErr) return err(insErr.message, 500);
+    }
+  }
+
   return ok(data);
+
+}
+
+/** DELETE /api/hotels — ホテル削除 */
+export async function DELETE(request: NextRequest) {
+  const { id } = await request.json();
+  if (!id) return err("id is required");
+
+  const db = getDb();
+  await db.from("hotel_ota_mappings").delete().eq("hotel_id", id);
+  await db.from("project_hotels").delete().eq("hotel_id", id);
+  const { error } = await db.from("hotels").delete().eq("id", id);
+  if (error) return err(error.message, 500);
+  return ok({ deleted: id });
 }

@@ -3,8 +3,16 @@ import type { OtaType } from "@ota/shared";
 import { OTA_EXTRACTORS } from "./extractors";
 import { acquireWorkerContext, type WorkerContext } from "./browser-pool";
 import { waitForDomain } from "./rate-limiter";
-import { calculateNaturalRanks, type RankResult } from "./rank-calculator";
-import type { ListItem } from "./extractor-types";
+import { calculateNaturalRanks, urlMatch, generatePaginationHints, type RankResult } from "./rank-calculator";
+import type { ListItem, OtaExtractor } from "./extractor-types";
+
+/** 前回のヒント情報 */
+export interface PaginationHint {
+  /** hotel_id → { displayRank, pageNumber } */
+  hotelPageMap: Record<string, { displayRank: number; pageNumber: number }>;
+  /** 前回スキャンした表示件数 (スクロール型OTA用) */
+  scannedCount: number;
+}
 
 /** タスク実行結果 */
 export interface TaskExecutionResult {
@@ -18,6 +26,9 @@ export interface TaskExecutionResult {
   /** 失敗時の証跡 */
   screenshotBuffer?: Buffer;
   htmlContent?: string;
+  /** 次回用ヒント */
+  paginationHints?: Record<string, { displayRank: number; pageNumber: number }>;
+  scannedCount?: number;
 }
 
 /** タスク入力 */
@@ -26,15 +37,28 @@ export interface TaskInput {
   url: string;
   /** hotel_id → [正規化済みOTA施設URL] */
   hotelUrlMap: Map<string, string[]>;
+  /** 前回のヒント（スマートページネーション用） */
+  paginationHint?: PaginationHint | null;
 }
 
 const NAVIGATION_TIMEOUT = 30000;
-const MAX_PAGES = 5; // 最大5ページ探索 (20件/ページ × 5 = 100件)
+const MAX_PAGES = 10; // 最大10ページ探索 (30件/ページ × 10 = ~200件超)
+const TASK_TIMEOUT = 300000; // タスク全体のタイムアウト (5分)
 
 /**
  * 1タスクを実行: URLアクセス → 一覧抽出 → 自然順位算出
+ * タスク全体にタイムアウトを設定してハングを防止
  */
 export async function executeTask(input: TaskInput): Promise<TaskExecutionResult> {
+  return Promise.race([
+    executeTaskInner(input),
+    new Promise<TaskExecutionResult>((_, reject) =>
+      setTimeout(() => reject(new Error("Task execution timeout (3 min)")), TASK_TIMEOUT),
+    ),
+  ]);
+}
+
+async function executeTaskInner(input: TaskInput): Promise<TaskExecutionResult> {
   const extractor = OTA_EXTRACTORS[input.ota];
   let worker: WorkerContext | null = null;
 
@@ -42,72 +66,77 @@ export async function executeTask(input: TaskInput): Promise<TaskExecutionResult
     worker = await acquireWorkerContext();
     const { page } = worker;
 
+    // OTA固有のウォームアップ (Booking.com: トップページ訪問でクッキー取得)
+    if (extractor.warmUp) {
+      await extractor.warmUp(page);
+    }
+
     // 速度制限
     await waitForDomain(input.url);
 
-    // ナビゲーション
-    await page.goto(input.url, {
-      waitUntil: "domcontentloaded",
-      timeout: NAVIGATION_TIMEOUT,
-    });
+    const waitStrategy = extractor.waitUntil ?? "networkidle";
+    const hint = input.paginationHint;
+    const canSmartPaginate = hint && extractor.getPageUrl
+      && Object.keys(hint.hotelPageMap).length > 0;
 
-    // CAPTCHA / ブロック検出
-    const blocked = await detectBlock(page);
-    if (blocked) {
-      const artifacts = await captureArtifacts(page);
-      return {
-        success: false,
-        totalCountInt: null,
-        totalCountRawText: null,
-        rankResult: null,
-        executedUrl: input.url,
-        errorCode: "blocked",
-        errorMessage: `Blocked or CAPTCHA detected: ${blocked}`,
-        ...artifacts,
-      };
-    }
+    let result: {
+      allItems: ListItem[];
+      totalCountInt: number | null;
+      totalCountRawText: string | null;
+    };
 
-    // ページング: 最大MAX_PAGESページ分を収集
-    const allItems: ListItem[] = [];
-    let totalCountInt: number | null = null;
-    let totalCountRawText: string | null = null;
-    let currentUrl = input.url;
-
-    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
-      const extraction = await extractor.extractPage(page);
-
-      // 総件数は1ページ目のみ
-      if (pageNum === 1) {
-        totalCountInt = extraction.totalCount;
-        totalCountRawText = extraction.totalCountRawText;
-      }
-
-      allItems.push(...extraction.items);
-
-      // 自然順位100件分集まったか、次ページ無しなら終了
-      const naturalCount = allItems.filter((i) => !i.isAd).length;
-      if (naturalCount >= 100 || !extraction.hasNextPage || pageNum >= MAX_PAGES) {
-        break;
-      }
-
-      // 次ページへ
-      currentUrl = extractor.getNextPageUrl(currentUrl, pageNum);
-      await waitForDomain(currentUrl);
-      await page.goto(currentUrl, {
-        waitUntil: "domcontentloaded",
+    if (canSmartPaginate) {
+      // ── スマートページネーション ──
+      result = await executeSmartPagination(page, extractor, input, hint!, waitStrategy);
+    } else {
+      // ── デフォルト: ページ1から順次スキャン ──
+      // ナビゲーション
+      await page.goto(input.url, {
+        waitUntil: waitStrategy,
         timeout: NAVIGATION_TIMEOUT,
       });
+
+      // CAPTCHA / ブロック検出
+      const blocked = await detectBlock(page);
+      if (blocked) {
+        const artifacts = await captureArtifacts(page);
+        return {
+          success: false,
+          totalCountInt: null,
+          totalCountRawText: null,
+          rankResult: null,
+          executedUrl: input.url,
+          errorCode: "blocked",
+          errorMessage: `Blocked or CAPTCHA detected: ${blocked}`,
+          ...artifacts,
+        };
+      }
+
+      // スクロール型OTA: 前回スキャン件数をブラウザに伝達（高速スクロール用）
+      if (extractor.isScrollBased && hint && hint.scannedCount > 0) {
+        await page.evaluate((target) => {
+          (window as any).__fastScrollTarget = target;
+        }, hint.scannedCount);
+      }
+
+      result = await executeDefaultPagination(page, extractor, input, waitStrategy);
     }
 
     // 自然順位算出
-    const rankResult = calculateNaturalRanks(allItems, input.hotelUrlMap);
+    const rankResult = calculateNaturalRanks(result.allItems, input.hotelUrlMap);
+
+    // ヒント生成
+    const itemsPerPage = extractor.itemsPerPage ?? 30;
+    const paginationHints = generatePaginationHints(rankResult, itemsPerPage);
 
     return {
       success: true,
-      totalCountInt,
-      totalCountRawText,
+      totalCountInt: result.totalCountInt,
+      totalCountRawText: result.totalCountRawText,
       rankResult,
       executedUrl: input.url,
+      paginationHints,
+      scannedCount: rankResult.scannedDisplayCount,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -133,6 +162,207 @@ export async function executeTask(input: TaskInput): Promise<TaskExecutionResult
       await worker.release();
     }
   }
+}
+
+/**
+ * スマートページネーション: ヒントを使ってターゲットページから探索開始
+ * - 前回ホテルが見つかったページから開始
+ * - 見つからなければ前後に拡大
+ * - 全ホテル発見で早期終了
+ */
+async function executeSmartPagination(
+  page: Page,
+  extractor: OtaExtractor,
+  input: TaskInput,
+  hint: PaginationHint,
+  waitStrategy: "domcontentloaded" | "load" | "networkidle",
+): Promise<{ allItems: ListItem[]; totalCountInt: number | null; totalCountRawText: string | null }> {
+  // ターゲットページを計算（ヒントに含まれるホテルのページ番号）
+  const targetPages = new Set<number>();
+  for (const [hotelId, h] of Object.entries(hint.hotelPageMap)) {
+    if (input.hotelUrlMap.has(hotelId) && h.pageNumber >= 1 && h.pageNumber <= MAX_PAGES) {
+      targetPages.add(h.pageNumber);
+    }
+  }
+
+  // ページ走査順序: ターゲット → 前後に展開 → 残りを埋める
+  const pageOrder = buildSmartPageOrder([...targetPages], MAX_PAGES);
+
+  // ページごとのアイテムを収集（ページ番号タグ付き）
+  const pageItems = new Map<number, ListItem[]>();
+  const visitedPages = new Set<number>();
+  let totalCountInt: number | null = null;
+  let totalCountRawText: string | null = null;
+  let firstNavDone = false;
+
+  console.log(`[smart] ${input.ota}: page order = [${pageOrder.slice(0, 8).join(",")}...] (targets: [${[...targetPages].join(",")}])`);
+
+  for (const pageNum of pageOrder) {
+    if (visitedPages.has(pageNum)) continue;
+
+    // ページURLを生成
+    const pageUrl = pageNum === 1
+      ? input.url
+      : extractor.getPageUrl!(input.url, pageNum);
+
+    // ナビゲーション
+    await waitForDomain(pageUrl);
+    await page.goto(pageUrl, {
+      waitUntil: waitStrategy,
+      timeout: NAVIGATION_TIMEOUT,
+    });
+
+    // 最初のページでブロック検出
+    if (!firstNavDone) {
+      firstNavDone = true;
+      const blocked = await detectBlock(page);
+      if (blocked) {
+        throw new Error(`Blocked or CAPTCHA detected: ${blocked}`);
+      }
+    }
+
+    // 抽出
+    const extraction = await extractor.extractPage(page);
+    visitedPages.add(pageNum);
+    pageItems.set(pageNum, extraction.items);
+
+    // 総件数（最初に取得できたものを使用）
+    if (totalCountInt === null && extraction.totalCount !== null) {
+      totalCountInt = extraction.totalCount;
+      totalCountRawText = extraction.totalCountRawText;
+    }
+
+    // 空ページ = これ以上先にはデータなし
+    if (extraction.items.length === 0) {
+      console.log(`[smart] ${input.ota}: page ${pageNum} empty, stopping expansion`);
+      break;
+    }
+
+    // 全ホテル発見チェック（ページ順に並べ直してからチェック）
+    const orderedItems = reconstructOrderedItems(pageItems);
+    if (allHotelsFound(orderedItems, input.hotelUrlMap)) {
+      console.log(`[smart] ${input.ota}: all hotels found after ${visitedPages.size} pages`);
+      break;
+    }
+
+    // 自然順位200件到達チェック
+    const naturalCount = orderedItems.filter((i) => !i.isAd).length;
+    if (naturalCount >= 200) {
+      break;
+    }
+  }
+
+  return {
+    allItems: reconstructOrderedItems(pageItems),
+    totalCountInt,
+    totalCountRawText,
+  };
+}
+
+/**
+ * デフォルトページネーション: ページ1から順次スキャン（既存ロジック + 早期終了）
+ */
+async function executeDefaultPagination(
+  page: Page,
+  extractor: OtaExtractor,
+  input: TaskInput,
+  waitStrategy: "domcontentloaded" | "load" | "networkidle",
+): Promise<{ allItems: ListItem[]; totalCountInt: number | null; totalCountRawText: string | null }> {
+  const allItems: ListItem[] = [];
+  let totalCountInt: number | null = null;
+  let totalCountRawText: string | null = null;
+  let currentUrl = input.url;
+
+  for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+    const extraction = await extractor.extractPage(page);
+
+    // 総件数は1ページ目のみ
+    if (pageNum === 1) {
+      totalCountInt = extraction.totalCount;
+      totalCountRawText = extraction.totalCountRawText;
+    }
+
+    allItems.push(...extraction.items);
+
+    // 自然順位200件分集まったか、次ページ無しなら終了
+    const naturalCount = allItems.filter((i) => !i.isAd).length;
+    if (naturalCount >= 200 || !extraction.hasNextPage || pageNum >= MAX_PAGES) {
+      break;
+    }
+
+    // 全ホテル発見で早期終了（ページネーション型のみ）
+    if (!extractor.isScrollBased && allHotelsFound(allItems, input.hotelUrlMap)) {
+      console.log(`[default] ${input.ota}: all hotels found at page ${pageNum}, early stop`);
+      break;
+    }
+
+    // 次ページへ
+    currentUrl = extractor.getNextPageUrl(currentUrl, pageNum);
+    await waitForDomain(currentUrl);
+    await page.goto(currentUrl, {
+      waitUntil: waitStrategy,
+      timeout: NAVIGATION_TIMEOUT,
+    });
+  }
+
+  return { allItems, totalCountInt, totalCountRawText };
+}
+
+/**
+ * スマートページ順序: ターゲットページ → 前後展開 → 残り
+ * 例: targets=[2,4], max=10 → [2, 4, 1, 3, 5, 6, 7, 8, 9, 10]
+ */
+function buildSmartPageOrder(targetPages: number[], maxPages: number): number[] {
+  if (targetPages.length === 0) {
+    return Array.from({ length: maxPages }, (_, i) => i + 1);
+  }
+
+  const order: number[] = [];
+  const seen = new Set<number>();
+
+  // ターゲットページを先頭に
+  for (const p of targetPages.sort((a, b) => a - b)) {
+    if (p >= 1 && p <= maxPages && !seen.has(p)) {
+      order.push(p);
+      seen.add(p);
+    }
+  }
+
+  // ターゲットの前後に展開
+  for (let delta = 1; delta <= maxPages; delta++) {
+    for (const target of targetPages) {
+      for (const candidate of [target - delta, target + delta]) {
+        if (candidate >= 1 && candidate <= maxPages && !seen.has(candidate)) {
+          order.push(candidate);
+          seen.add(candidate);
+        }
+      }
+    }
+  }
+
+  return order;
+}
+
+/**
+ * ページ番号順にアイテムを結合（正しい表示順序を再構成）
+ */
+function reconstructOrderedItems(pageItems: Map<number, ListItem[]>): ListItem[] {
+  return [...pageItems.entries()]
+    .sort(([a], [b]) => a - b)
+    .flatMap(([, items]) => items);
+}
+
+/**
+ * 全ホテルが見つかったかチェック
+ */
+function allHotelsFound(items: ListItem[], hotelUrlMap: Map<string, string[]>): boolean {
+  for (const [, urls] of hotelUrlMap) {
+    const found = items.some((item) =>
+      urls.some((u) => urlMatch(item.propertyUrl, u)),
+    );
+    if (!found) return false;
+  }
+  return true;
 }
 
 /** CAPTCHA / ブロック検出 */

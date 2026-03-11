@@ -7,6 +7,7 @@ export const OTA_LIST = [
   "booking",
   "agoda",
   "tripcom",
+  "yahoo",
 ] as const;
 
 export type OtaType = (typeof OTA_LIST)[number];

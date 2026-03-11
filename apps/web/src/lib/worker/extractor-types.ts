@@ -28,8 +28,24 @@ export interface PageExtraction {
 /** OTA別の抽出インターフェース */
 export interface OtaExtractor {
   ota: OtaType;
+  /** ナビゲーション時の待機戦略（デフォルト: networkidle） */
+  waitUntil?: "domcontentloaded" | "load" | "networkidle";
+  /** ページネーションOTA: 1ページあたりの件数 */
+  itemsPerPage?: number;
+  /** 無限スクロール型OTAかどうか */
+  isScrollBased?: boolean;
+  /** 検索ページナビゲーション前のウォームアップ (クッキー取得等) */
+  warmUp?(page: Page): Promise<void>;
   /** ページから一覧を抽出 */
-  extractPage(page: Page): Promise<PageExtraction>;
+  extractPage(page: Page, options?: ExtractOptions): Promise<PageExtraction>;
   /** 次ページへ遷移する URL を生成（ページング） */
   getNextPageUrl(currentUrl: string, currentPage: number): string;
+  /** 任意のページ番号のURLを生成（スマートページネーション用） */
+  getPageUrl?(baseUrl: string, pageNumber: number): string;
+}
+
+/** extractPage に渡すオプション */
+export interface ExtractOptions {
+  /** スクロール型OTA: 高速スクロールの目標アイテム数 */
+  fastScrollUntil?: number;
 }
