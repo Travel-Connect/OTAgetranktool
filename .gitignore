@@ -37,5 +37,8 @@ supabase/.temp/
 # Claude Code audit logs
 .claude/audit/
 
+# secrets / keys
+.ssh/
+
 # misc
 *.log
