@@ -1,8 +1,15 @@
 import type { Project, Hotel, SearchProfile, Preset, Job, JobTask } from "./types";
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  // API_SECRET が設定されている場合、認証ヘッダーを付与
+  const secret = process.env.NEXT_PUBLIC_API_SECRET;
+  if (secret) headers["x-api-secret"] = secret;
+
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...opts,
   });
   const data = await res.json();
@@ -139,6 +146,8 @@ export const jobsApi = {
     }),
   run: (id: string) =>
     request<{ message: string }>(`/api/jobs/${id}/run`, { method: "POST" }),
+  cancel: (id: string) =>
+    request<{ message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   results: (id: string) =>
     request<{ job: Job; tasks: JobTask[] }>(`/api/jobs/${id}/results`),
 };

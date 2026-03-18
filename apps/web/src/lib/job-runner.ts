@@ -1,6 +1,7 @@
 import { getDb } from "./db/server";
 import { OTA_BUILDERS, type SearchCondition, type SearchProfile, type OtaType } from "@ota/shared";
 import { executeTask, closeBrowser, type TaskInput, type PaginationHint } from "./worker";
+import { DISABLED_OTAS } from "./constants";
 import { normalizeTripcomUrl } from "./worker/extractors/tripcom";
 import { normalizeRakutenUrl } from "./worker/extractors/rakuten";
 import { normalizeJalanUrl } from "./worker/extractors/jalan";
@@ -15,14 +16,32 @@ const MAX_RETRIES = 3;
 /** 国内OTA（CAPTCHA検出が緩い → 並列実行可能） */
 const DOMESTIC_OTAS = new Set<string>(["rakuten", "jalan", "ikyu", "yahoo"]);
 
+/** VPSワーカーに完全委譲するOTA（別IPのみで実行） */
+const VPS_ONLY_OTAS = new Set<string>(["booking"]);
+
+/** 2IP交互実行するOTA（ローカルとVPSで交互に実行） — 現在未使用 */
+const DUAL_IP_OTAS = new Set<string>([]);
+
 /** 海外OTA用タスク間クールダウン (ms) */
 const OTA_COOLDOWN: Record<string, number> = {
-  expedia: 30000,   // 30秒 — DataDome が厳しい
+  expedia: 30000,   // 30秒 — ブロック時はバックオフ (2分→5分) で自動エスカレーション
   booking: 20000,   // 20秒 — IPベースボット検出
   agoda: 15000,     // 15秒 — ボット検出あり
   tripcom: 10000,   // 10秒
 };
 const DEFAULT_COOLDOWN = 5000;
+
+/** ブロック検出時のバックオフ設定 (ms) */
+const BLOCKED_BACKOFF_INITIAL = 120_000;   // 初回ブロック: 2分待機
+const BLOCKED_BACKOFF_ESCALATED = 300_000; // 2回連続ブロック: 5分待機
+
+/**
+ * ジョブがキャンセルされたかDBで確認
+ */
+async function isJobCancelled(db: ReturnType<typeof getDb>, jobId: string): Promise<boolean> {
+  const { data } = await db.from("jobs").select("status").eq("id", jobId).single();
+  return data?.status === "cancelled";
+}
 
 /**
  * ジョブを実行する
@@ -133,9 +152,49 @@ export async function runJob(jobId: string): Promise<void> {
     }
   }
 
-  // 国内OTAと海外OTAに分離
-  const domesticTasks = tasks.filter((t: any) => DOMESTIC_OTAS.has(t.ota));
-  const overseasTasks = tasks.filter((t: any) => !DOMESTIC_OTAS.has(t.ota));
+  // 無効化OTAのタスクをスキップ
+  const disabledTasks = tasks.filter((t: any) => DISABLED_OTAS.has(t.ota));
+  if (disabledTasks.length > 0) {
+    const disabledIds = disabledTasks.map((t: any) => t.id);
+    await db.from("job_tasks").update({ status: "skipped" }).in("id", disabledIds);
+    console.log(`[disabled] Skipped ${disabledTasks.length} tasks for disabled OTAs: ${[...new Set(disabledTasks.map((t: any) => t.ota))].join(", ")}`);
+  }
+  const activeTasks = tasks.filter((t: any) => !DISABLED_OTAS.has(t.ota));
+
+  // タスクを4カテゴリに分離:
+  // 1) 国内OTA → 並列実行
+  // 2) VPS完全委譲OTA (Booking) → VPSワーカーに任せる
+  // 3) 2IP交互OTA (Expedia) → ローカルとVPSで交互に実行
+  // 4) 残りの海外OTA (Agoda, Trip.com) → ローカル逐次実行
+  const domesticTasks = activeTasks.filter((t: any) => DOMESTIC_OTAS.has(t.ota));
+  const vpsOnlyTasks = activeTasks.filter((t: any) => VPS_ONLY_OTAS.has(t.ota));
+  const dualIpAllTasks = activeTasks.filter((t: any) => DUAL_IP_OTAS.has(t.ota));
+  const overseasTasks = activeTasks.filter((t: any) =>
+    !DOMESTIC_OTAS.has(t.ota) && !VPS_ONLY_OTAS.has(t.ota) && !DUAL_IP_OTAS.has(t.ota));
+
+  // 2IP交互: 偶数番目 → VPS委譲、奇数番目 → ローカル実行
+  const vpsDelegatedTasks: any[] = [...vpsOnlyTasks];
+  const localExpediaTasks: any[] = [];
+  dualIpAllTasks.forEach((t: any, i: number) => {
+    if (i % 2 === 0) {
+      vpsDelegatedTasks.push(t); // VPSで実行
+    } else {
+      localExpediaTasks.push(t); // ローカルで実行
+    }
+  });
+
+  // ローカルExpediaタスクは海外OTAキューに追加
+  overseasTasks.push(...localExpediaTasks);
+
+  // VPS委譲タスクにマーカー設定
+  if (vpsDelegatedTasks.length > 0) {
+    const vpsDelegatedIds = vpsDelegatedTasks.map((t: any) => t.id);
+    await db.from("job_tasks").update({ claimed_by: "vps" }).in("id", vpsDelegatedIds);
+    const vpsExpediaCount = dualIpAllTasks.filter((_: any, i: number) => i % 2 === 0).length;
+    const vpsBookingCount = vpsOnlyTasks.length;
+    const localExpediaCount = localExpediaTasks.length;
+    console.log(`[vps-delegate] Booking: ${vpsBookingCount} → VPS, Expedia: ${vpsExpediaCount} → VPS / ${localExpediaCount} → local`);
+  }
 
   let successCount = 0;
   let failCount = 0;
@@ -280,7 +339,7 @@ export async function runJob(jobId: string): Promise<void> {
           })
           .eq("id", task.id);
 
-        return { ...task, attempt_count: attemptCount };
+        return { ...task, attempt_count: attemptCount, last_error_code: result.errorCode };
       } else {
         await db
           .from("job_tasks")
@@ -309,6 +368,10 @@ export async function runJob(jobId: string): Promise<void> {
       let retryQueue = [...domesticTasks];
 
       while (retryQueue.length > 0) {
+        if (await isJobCancelled(db, jobId)) {
+          console.log(`[cancel] Job ${jobId} cancelled, stopping domestic phase`);
+          break;
+        }
         const batch = retryQueue.splice(0, PARALLEL_BATCH_SIZE);
         const retryResults = await Promise.all(batch.map(runSingleTask));
         const retries = retryResults.filter((r): r is any => r !== null);
@@ -316,7 +379,7 @@ export async function runJob(jobId: string): Promise<void> {
       }
     }
 
-    // ── Phase 2: 海外OTA 逐次実行（インターリーブ + クールダウン） ──
+    // ── Phase 2: 海外OTA 逐次実行（インターリーブ + クールダウン + ブロックバックオフ） ──
     // Expedia・Booking・Agoda・Trip.com は CAPTCHA 対策のため1つずつ
     if (overseasTasks.length > 0) {
       const overseasQueue = interleaveByOta(overseasTasks);
@@ -325,10 +388,49 @@ export async function runJob(jobId: string): Promise<void> {
       let lastExecutedOta: string | null = null;
       let lastExecutedTime = 0;
 
-      while (overseasQueue.length > 0) {
-        const task = overseasQueue.shift()!;
+      // OTA別ブロック追跡: 連続ブロック回数 & 冷却期限
+      const otaBlockState = new Map<string, { consecutiveBlocks: number; cooldownUntil: number }>();
 
-        // 同一OTA連続実行時のクールダウン
+      while (overseasQueue.length > 0) {
+        if (await isJobCancelled(db, jobId)) {
+          console.log(`[cancel] Job ${jobId} cancelled, stopping overseas phase`);
+          break;
+        }
+        // 冷却中でないタスクを探す（冷却中のものはスキップして後回し）
+        let taskIndex = -1;
+        let deferredCount = 0;
+        for (let i = 0; i < overseasQueue.length; i++) {
+          const candidate = overseasQueue[i];
+          const blockState = otaBlockState.get(candidate.ota);
+          if (blockState && Date.now() < blockState.cooldownUntil) {
+            deferredCount++;
+            continue; // このOTAはまだ冷却中
+          }
+          taskIndex = i;
+          break;
+        }
+
+        // 全タスクが冷却中の場合、最も早く冷却が解除されるタスクを待つ
+        if (taskIndex === -1) {
+          let earliestCooldown = Infinity;
+          let earliestIndex = 0;
+          for (let i = 0; i < overseasQueue.length; i++) {
+            const blockState = otaBlockState.get(overseasQueue[i].ota);
+            const until = blockState?.cooldownUntil ?? 0;
+            if (until < earliestCooldown) {
+              earliestCooldown = until;
+              earliestIndex = i;
+            }
+          }
+          const waitMs = Math.max(0, earliestCooldown - Date.now());
+          console.log(`[backoff] All ${overseasQueue.length} remaining tasks are cooling down. Waiting ${Math.round(waitMs / 1000)}s...`);
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          taskIndex = earliestIndex;
+        }
+
+        const task = overseasQueue.splice(taskIndex, 1)[0];
+
+        // 同一OTA連続実行時の通常クールダウン
         if (lastExecutedOta === task.ota) {
           const cooldown = OTA_COOLDOWN[task.ota] ?? DEFAULT_COOLDOWN;
           const elapsed = Date.now() - lastExecutedTime;
@@ -345,7 +447,27 @@ export async function runJob(jobId: string): Promise<void> {
         lastExecutedTime = Date.now();
 
         if (retryTask) {
+          // ブロック検出かどうかを判定（last_error_code が "blocked" のリトライタスク）
+          const isBlocked = retryTask.last_error_code === "blocked";
+
+          if (isBlocked) {
+            const state = otaBlockState.get(task.ota) ?? { consecutiveBlocks: 0, cooldownUntil: 0 };
+            state.consecutiveBlocks++;
+            const backoff = state.consecutiveBlocks >= 2 ? BLOCKED_BACKOFF_ESCALATED : BLOCKED_BACKOFF_INITIAL;
+            state.cooldownUntil = Date.now() + backoff;
+            otaBlockState.set(task.ota, state);
+            console.log(`[backoff] ${task.ota}: blocked ${state.consecutiveBlocks}x → cooling down ${Math.round(backoff / 1000)}s`);
+          } else {
+            // ブロック以外のエラー（timeout等）はブロック回数をリセット
+            const state = otaBlockState.get(task.ota);
+            if (state) state.consecutiveBlocks = 0;
+          }
+
           overseasQueue.push(retryTask);
+        } else {
+          // 成功 or 最終失敗 → ブロック回数リセット
+          const state = otaBlockState.get(task.ota);
+          if (state) state.consecutiveBlocks = 0;
         }
       }
     }
@@ -354,11 +476,60 @@ export async function runJob(jobId: string): Promise<void> {
   }
 
   // ジョブステータス更新
-  const finalStatus = failCount === 0 ? "success" : successCount > 0 ? "partial" : "failed";
-  await db
-    .from("jobs")
-    .update({ status: finalStatus, finished_at: new Date().toISOString() })
-    .eq("id", jobId);
+  // VPS委譲タスクがある場合、それらはまだ非同期で処理中なのでジョブを完了にしない
+  try {
+    if (vpsDelegatedTasks.length > 0) {
+      // VPS委譲タスクの完了をポーリングで待機（最大10分、30秒間隔）
+      const vpsDelegatedIds = vpsDelegatedTasks.map((t: any) => t.id);
+      const maxWait = 600_000;
+      const pollInterval = 30_000;
+      const startWait = Date.now();
+      console.log(`[vps-delegate] Waiting for ${vpsDelegatedIds.length} VPS tasks to complete (max ${maxWait / 60000}min)...`);
+
+      while (Date.now() - startWait < maxWait) {
+        if (await isJobCancelled(db, jobId)) {
+          console.log(`[cancel] Job ${jobId} cancelled, stopping VPS polling`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, pollInterval));
+        const { data: vpsTasks } = await db
+          .from("job_tasks")
+          .select("id, status")
+          .in("id", vpsDelegatedIds);
+        const pending = (vpsTasks ?? []).filter((t: any) => t.status === "queued" || t.status === "running");
+        if (pending.length === 0) {
+          console.log(`[vps-delegate] All VPS tasks completed`);
+          const vpsSuccess = (vpsTasks ?? []).filter((t: any) => t.status === "success").length;
+          const vpsFail = (vpsTasks ?? []).filter((t: any) => t.status === "failed").length;
+          successCount += vpsSuccess;
+          failCount += vpsFail;
+          break;
+        }
+        console.log(`[vps-delegate] ${pending.length} VPS tasks still running...`);
+      }
+    }
+
+    // キャンセル済みの場合はステータスを上書きしない
+    if (await isJobCancelled(db, jobId)) {
+      console.log(`[cancel] Job ${jobId} was cancelled, keeping cancelled status`);
+      return;
+    }
+
+    const finalStatus = failCount === 0 ? "success" : successCount > 0 ? "partial" : "failed";
+    await db
+      .from("jobs")
+      .update({ status: finalStatus, finished_at: new Date().toISOString() })
+      .eq("id", jobId);
+  } catch (statusErr) {
+    console.error(`[job-runner] Failed to update job status for ${jobId}:`, statusErr);
+    // ステータス更新失敗時のフォールバック: failed で記録を試みる
+    try {
+      await db
+        .from("jobs")
+        .update({ status: "failed", finished_at: new Date().toISOString() })
+        .eq("id", jobId);
+    } catch { /* 最終手段も失敗 — ログのみ */ }
+  }
 }
 
 /**

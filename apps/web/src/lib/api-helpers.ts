@@ -17,3 +17,10 @@ export function verifyCronSecret(request: Request): boolean {
   if (!secret) return false;
   return auth === `Bearer ${secret}`;
 }
+
+/** API 認証チェック（middleware のバックアップ用） */
+export function verifyApiSecret(request: Request): boolean {
+  const secret = process.env.API_SECRET;
+  if (!secret) return true; // 未設定時はスキップ
+  return request.headers.get("x-api-secret") === secret;
+}

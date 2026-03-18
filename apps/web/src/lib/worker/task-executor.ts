@@ -256,7 +256,7 @@ async function executeSmartPagination(
   // ── 順位確定フェーズ: 未取得ページを埋め戻し ──
   // page 1 〜 max(取得済みページ) の間に欠けたページがあれば取得し、
   // 絶対順位の正確性を保証する
-  const maxVisited = Math.max(...visitedPages);
+  const maxVisited = visitedPages.size > 0 ? Math.max(...visitedPages) : 0;
   for (let p = 1; p <= maxVisited; p++) {
     if (visitedPages.has(p)) continue;
 

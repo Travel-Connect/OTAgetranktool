@@ -259,6 +259,7 @@ describe("all builders produce valid URLs", () => {
     booking: makeProfile("booking", "https://www.booking.com/searchresults.ja.html?dest_id=1"),
     agoda: makeProfile("agoda", "https://www.agoda.com/ja-jp/search?region=1"),
     tripcom: makeProfile("tripcom", "https://jp.trip.com/hotels/list?searchType=S"),
+    yahoo: makeProfile("yahoo", "https://travel.yahoo.co.jp/hotel/list/okinawa/36201004/"),
   };
 
   for (const ota of OTA_LIST) {

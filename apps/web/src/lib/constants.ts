@@ -4,6 +4,9 @@ export const OTA_LIST = [
   "rakuten", "jalan", "ikyu", "expedia", "booking", "agoda", "tripcom", "yahoo",
 ] as const;
 
+/** 一時無効化 OTA — タスク生成・実行をスキップ */
+export const DISABLED_OTAS: Set<string> = new Set(["expedia"]);
+
 export const OTA_DISPLAY_NAMES: Record<OtaType, string> = {
   rakuten: "楽天トラベル",
   jalan: "じゃらん",
@@ -21,6 +24,7 @@ export const STATUS_COLORS: Record<string, string> = {
   success: "bg-green-600",
   partial: "bg-yellow-500",
   failed: "bg-red-600",
+  cancelled: "bg-gray-500",
   skipped: "bg-gray-300",
 };
 
@@ -30,5 +34,6 @@ export const STATUS_LABELS: Record<string, string> = {
   success: "成功",
   partial: "一部成功",
   failed: "失敗",
+  cancelled: "停止済み",
   skipped: "スキップ",
 };
