@@ -1,7 +1,7 @@
 /**
  * VPS Multi-OTA Worker
  *
- * VPS ([VPS-IP-REDACTED]) で動作する Booking.com ワーカー。
+ * VPS で動作する Booking.com ワーカー。
  * - Booking.com: クリーンIPで正確な順位取得
  * - Expedia: コード残存するが現在無効化（DataDome IPブロック）
  *
