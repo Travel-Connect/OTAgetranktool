@@ -17,6 +17,7 @@ export default function JobDetailPage() {
   const [tasks, setTasks] = useState<JobTask[]>([]);
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +53,20 @@ export default function JobDetailPage() {
 
   const successCount = tasks.filter((t) => t.status === "success").length;
   const failedCount = tasks.filter((t) => t.status === "failed" || t.status === "skipped").length;
+  const isRunning = job.status === "running" || job.status === "queued";
+
+  const handleCancel = async () => {
+    if (!confirm("ジョブを停止しますか？実行中のタスクは完了後に停止します。")) return;
+    setCancelling(true);
+    try {
+      await jobsApi.cancel(jobId);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "停止に失敗しました");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   return (
     <div>
@@ -72,6 +87,16 @@ export default function JobDetailPage() {
           </h2>
         </div>
         <div className="flex gap-2">
+          {isRunning && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCancel}
+              disabled={cancelling}
+            >
+              {cancelling ? "停止中..." : "停止"}
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={load}>更新</Button>
           <a href={`/api/jobs/${jobId}/excel`} download>
             <Button size="sm">Excel ダウンロード</Button>
