@@ -42,3 +42,23 @@ supabase/.temp/
 
 # misc
 *.log
+
+# 開発・偵察用ワンオフスクリプト（コミット対象外）
+apps/web/check-*.cjs
+apps/web/recon-*.cjs
+apps/web/recon-*.png
+apps/web/cleanup-*.cjs
+apps/web/fix-*.cjs
+apps/web/query-*.cjs
+apps/web/e2e-*.cjs
+docs/recon-*.mjs
+
+# テスト出力物
+apps/web/test-output*.xlsx
+docs/test-output*.xlsx
+
+# Booking API キャプチャ（サイズ大）
+docs/booking-api-capture/
+
+# 個人メモ
+初期プロンプト.txt
