@@ -50,6 +50,17 @@ export function ResultsMatrix({ tasks, hotels }: Props) {
             {[...adultGroups.entries()].sort(([a], [b]) => a - b).map(([adults, sectionTasks]) => {
               const dates = [...new Set(sectionTasks.map((t) => t.checkin_date))].sort();
 
+              // このOTA×人数セクションに実際にランクデータがあるホテルだけ表示
+              const relevantHotelIds = new Set<string>();
+              for (const t of sectionTasks) {
+                if (t.task_results?.ranks_json) {
+                  for (const hid of Object.keys(t.task_results.ranks_json)) {
+                    relevantHotelIds.add(hid);
+                  }
+                }
+              }
+              const sectionHotels = hotels.filter((h) => relevantHotelIds.has(h.id));
+
               return (
                 <div key={`${ota}-${adults}`} className="mb-4">
                   <p className="text-xs font-semibold text-gray-600 mb-1">{adults}名/室</p>
@@ -68,7 +79,7 @@ export function ResultsMatrix({ tasks, hotels }: Props) {
                         </tr>
                       </thead>
                       <tbody>
-                        {hotels.map((hotel) => (
+                        {sectionHotels.map((hotel) => (
                           <tr key={hotel.id} className="border-t border-gray-100">
                             <td className="px-3 py-1.5 font-medium border-r border-gray-200 sticky left-0 bg-white">
                               {hotel.display_name}

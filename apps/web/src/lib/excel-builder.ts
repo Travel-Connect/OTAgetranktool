@@ -114,7 +114,15 @@ export async function buildExcel(input: ExcelInput): Promise<Buffer> {
       }
 
       // ホテル行（表示順位 = display_ranks_json）
-      for (const hotel of input.hotels) {
+      // このセクションにランクデータがあるホテルだけ表示
+      const relevantIds = new Set<string>();
+      for (const t of sectionTasks) {
+        if (t.task_results?.ranks_json) {
+          for (const hid of Object.keys(t.task_results.ranks_json)) relevantIds.add(hid);
+        }
+      }
+      const sectionHotels = input.hotels.filter((h) => relevantIds.has(h.id));
+      for (const hotel of sectionHotels) {
         const hotelRow = sheet.getRow(currentRow);
         hotelRow.getCell(2).value = hotel.display_name;
         for (let i = 0; i < otaDates.length; i++) {
