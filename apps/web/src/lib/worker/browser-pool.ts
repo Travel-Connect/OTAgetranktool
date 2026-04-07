@@ -1,10 +1,14 @@
 import { chromium } from "playwright-extra";
+import { firefox } from "playwright";
 import type { Browser, BrowserContext, Page } from "playwright";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { getNextProfile, type BrowserProfile } from "./ua-rotation";
 
 // ボット検出回避: navigator.webdriver 隠蔽、HeadlessChrome UA 修正 等
 chromium.use(StealthPlugin());
+
+/** ブラウザエンジン選択: "chromium" | "firefox" */
+const BROWSER_ENGINE: "chromium" | "firefox" = "chromium";
 
 /** グローバル同時実行数上限 */
 const MAX_CONCURRENCY = 5;
@@ -15,10 +19,14 @@ let activeContexts = 0;
 /** ブラウザインスタンスを取得（シングルトン） */
 async function getBrowser(): Promise<Browser> {
   if (!browser || !browser.isConnected()) {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    if (BROWSER_ENGINE === "firefox") {
+      browser = await firefox.launch({ headless: true });
+    } else {
+      browser = await chromium.launch({
+        headless: true,
+        args: ["--disable-blink-features=AutomationControlled"],
+      });
+    }
   }
   return browser;
 }
@@ -62,7 +70,7 @@ export async function acquireWorkerContext(): Promise<WorkerContext> {
 
   let context: BrowserContext | null = null;
   try {
-    const profile = getNextProfile();
+    const profile = getNextProfile(BROWSER_ENGINE);
     const b = await getBrowser();
     context = await b.newContext({
       userAgent: profile.userAgent,
